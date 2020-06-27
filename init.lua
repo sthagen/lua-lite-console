@@ -8,41 +8,27 @@ local View = require "core.view"
 
 config.console_size = 250 * SCALE
 config.max_console_lines = 200
-
-
-local uid = os.tmpname():gsub("%W", "")
+config.autoscroll_console = true
 
 local files = {
-  script   = EXEDIR .. "/.lite_console_" .. uid .. "_script",
-  script2  = EXEDIR .. "/.lite_console_" .. uid .. "_script2",
-  output   = EXEDIR .. "/.lite_console_" .. uid .. "_output",
-  complete = EXEDIR .. "/.lite_console_" .. uid .. "_complete",
+  script   = core.temp_filename(PLATFORM == "Windows" and ".bat"),
+  script2  = core.temp_filename(PLATFORM == "Windows" and ".bat"),
+  output   = core.temp_filename(),
+  complete = core.temp_filename(),
 }
-
-if PLATFORM == "Windows" then
-  files.script  = files.script  .. ".bat"
-  files.script2 = files.script2 .. ".bat"
-end
-
-local function clean_up()
-  for _, file in pairs(files) do
-    os.remove(file)
-  end
-end
-clean_up()
-
-local exit = os.exit
-os.exit = function(...) clean_up() return exit(...) end
-
 
 local console = {}
 
 local views = {}
 local pending_threads = {}
 local thread_active = false
-local output = { { text = "", time = 0 } }
+local output = nil
 local output_id = 0
 local visible = false
+
+function console.clear()
+  output = { { text = "", time = 0 } }
+end
 
 
 local function read_file(filename, offset)
@@ -151,10 +137,15 @@ function console.run(opt)
       coroutine.yield(0.1)
     end
     check_output_file()
+    if output[#output].text ~= "" then
+      push_output("\n", opt)
+    end
     push_output("!DIVIDER\n", opt)
 
     -- clean up and finish
-    clean_up()
+    for _, file in pairs(files) do
+      os.remove(file)
+    end
     opt.on_complete()
 
     -- handle pending thread
@@ -188,7 +179,6 @@ function ConsoleView:new()
   ConsoleView.super.new(self)
   self.scrollable = true
   self.hovered_idx = -1
-  self.focusable = false
   views[self] = true
 end
 
@@ -274,6 +264,7 @@ function ConsoleView:on_mouse_pressed(...)
       return
     end
     core.try(function()
+      core.set_active_view(core.last_active_view)
       local dv = core.root_view:open_doc(core.open_doc(resolved_file))
       if line then
         dv.doc:set_selection(line, col or 0)
@@ -304,7 +295,9 @@ end
 
 function ConsoleView:update(...)
   if self.last_output_id ~= output_id then
-    self.scroll.to.y = self:get_scrollable_size()
+    if config.autoscroll_console then
+      self.scroll.to.y = self:get_scrollable_size()
+    end
     self.last_output_id = output_id
   end
   ConsoleView.super.update(self, ...)
@@ -383,4 +376,8 @@ keymap.add {
   ["ctrl+shift+."] = "console:run",
 }
 
+-- for `workspace` plugin:
+package.loaded["plugins.console.view"] = ConsoleView
+
+console.clear()
 return console
